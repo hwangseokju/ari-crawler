@@ -23,7 +23,17 @@ SUPABASE_KEY = _get_secret("SUPABASE_ANON_KEY")
 
 try:
     from supabase import create_client, Client
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+    import streamlit as st
+
+    @st.cache_resource
+    def _get_supabase_client():
+        url = _get_secret("SUPABASE_URL")
+        key = _get_secret("SUPABASE_ANON_KEY")
+        if url and key:
+            return create_client(url, key)
+        return None
+
+    supabase = _get_supabase_client()
     SUPABASE_OK = supabase is not None
 except Exception as e:
     supabase = None
