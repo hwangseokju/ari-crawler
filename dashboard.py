@@ -128,7 +128,7 @@ def run_crawler(user_id, progress_bar, status_text):
             except: pass
         for it in items:
             if "url" in it and "link" not in it: it["link"]=it["url"]
-        added_total += sdb.save_items(items, query_category=cat)
+        added_total += sdb.save_items(items, query_category=cat, user_id=user_id)
     status_text.text(f"✅ 완료! 신규 {added_total}건 저장")
     return added_total
 
@@ -182,8 +182,8 @@ def main_dashboard():
     tab_list = st.tabs(tabs)
 
     days = filter_days if filter_days > 0 else None
-    stats = sdb.get_stats()
-    items = sdb.get_items(days=days)
+    stats = sdb.get_stats(user_id=user["id"])
+    items = sdb.get_items(days=days, user_id=user["id"])
 
     # 분석
     with tab_list[0]:

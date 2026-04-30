@@ -166,8 +166,8 @@ def copy_default_keywords_to_user(user_id: int):
 
 # ── 수집 결과 저장 ────────────────────────────────────────────
 
-def save_items(items: List[Dict], query_category: str) -> int:
-    """수집 결과 저장 (URL 기준 중복 제거)."""
+def save_items(items: List[Dict], query_category: str, user_id: int = None) -> int:
+    """수집 결과 저장 (URL + user_id 기준 중복 제거)."""
     if not SUPABASE_OK or not items:
         return 0
 
@@ -179,12 +179,15 @@ def save_items(items: List[Dict], query_category: str) -> int:
         if not url:
             continue
         try:
-            # URL 중복 확인
-            existing = supabase.table("items").select("id").eq("url", url).execute()
+            # URL + user_id 중복 확인
+            q = supabase.table("items").select("id").eq("url", url)
+            if user_id:
+                q = q.eq("user_id", user_id)
+            existing = q.execute()
             if existing.data:
                 continue
 
-            supabase.table("items").insert({
+            row = {
                 "url": url,
                 "title": item.get("title", "")[:500],
                 "description": item.get("description", "")[:1000],
@@ -195,7 +198,10 @@ def save_items(items: List[Dict], query_category: str) -> int:
                 "blogger_name": (item.get("bloggername") or item.get("blogger_name") or "")[:200],
                 "cafe_name": (item.get("cafename") or item.get("cafe_name") or "")[:200],
                 "first_seen": now,
-            }).execute()
+            }
+            if user_id:
+                row["user_id"] = user_id
+            supabase.table("items").insert(row).execute()
             added += 1
         except Exception as e:
             print(f"  [save 오류] {e}: {url[:80]}")
@@ -204,13 +210,16 @@ def save_items(items: List[Dict], query_category: str) -> int:
 
 
 def get_items(days: int = None, category: str = None,
-              platform: str = None, keyword: str = None) -> List[Dict]:
-    """수집 결과 조회."""
+              platform: str = None, keyword: str = None,
+              user_id: int = None) -> List[Dict]:
+    """수집 결과 조회 (user_id로 본인 데이터만)."""
     if not SUPABASE_OK:
         return []
     try:
         query = supabase.table("items").select("*")
 
+        if user_id:
+            query = query.eq("user_id", user_id)
         if days:
             cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
             query = query.gte("first_seen", cutoff)
@@ -223,7 +232,6 @@ def get_items(days: int = None, category: str = None,
         res = query.execute()
         items = res.data or []
 
-        # 키워드 필터는 클라이언트 사이드
         if keyword:
             kw_lower = keyword.lower()
             items = [it for it in items
@@ -234,17 +242,23 @@ def get_items(days: int = None, category: str = None,
         return []
 
 
-def get_stats() -> Dict:
+def get_stats(user_id: int = None) -> Dict:
     """통계 데이터."""
     if not SUPABASE_OK:
         return {"total": 0, "by_category": {}, "by_platform": {}, "top_queries": [], "daily_trend": []}
     try:
         # 전체 수
-        total_res = supabase.table("items").select("id", count="exact").execute()
+        q_total = supabase.table("items").select("id", count="exact")
+        if user_id:
+            q_total = q_total.eq("user_id", user_id)
+        total_res = q_total.execute()
         total = total_res.count or 0
 
         # 카테고리별
-        items_all = supabase.table("items").select("query_category, platform, query, first_seen").execute().data or []
+        q = supabase.table("items").select("query_category, platform, query, first_seen")
+        if user_id:
+            q = q.eq("user_id", user_id)
+        items_all = q.execute().data or []
 
         by_cat = {}
         by_plat = {}
