@@ -260,11 +260,8 @@ def main_dashboard():
         st.markdown(f"### 🔑 {user['username']}님의 키워드")
         keywords = sdb.get_keywords(user["id"])
         if not keywords:
-            st.warning("아직 키워드가 없습니다.")
-            if st.button("기본 키워드로 시작하기"):
-                sdb.copy_default_keywords_to_user(user["id"])
-                st.success("기본 키워드 추가 완료!"); st.rerun()
-        else:
+            st.info("아직 키워드가 없습니다. 아래에서 직접 추가하세요.")
+        if True:
             with st.expander("➕ 키워드 추가", expanded=True):
                 c1,c2,c3 = st.columns([2,3,1])
                 with c1:
