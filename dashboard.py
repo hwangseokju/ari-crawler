@@ -53,20 +53,58 @@ PLATFORM_KR = {
 def badge(p):
     return f'<span class="badge badge-{p}">{PLATFORM_KR.get(p,p)}</span>'
 
+def get_cookie(key):
+    try:
+        import extra_streamlit_components as stx
+        cm = stx.CookieManager()
+        return cm.get(key)
+    except: return None
+
+def set_cookie(key, value):
+    try:
+        import extra_streamlit_components as stx
+        cm = stx.CookieManager()
+        cm.set(key, value, max_age=30*24*3600)
+    except: pass
+
+def delete_cookie(key):
+    try:
+        import extra_streamlit_components as stx
+        cm = stx.CookieManager()
+        cm.delete(key)
+    except: pass
+
 def login_page():
     st.markdown("## 🔍 아리텍 크롤링 대시보드")
     st.markdown("---")
     if not sdb.SUPABASE_OK:
         st.error("Supabase 연결 실패. SUPABASE_URL, SUPABASE_ANON_KEY 확인하세요.")
         return
+
+    # 자동 로그인 확인
+    saved_user = get_cookie("ari_username")
+    saved_pw = get_cookie("ari_password")
+    if saved_user and saved_pw:
+        user = sdb.get_user(saved_user, saved_pw)
+        if user:
+            st.session_state["user"] = user
+            st.rerun()
+
     c1,c2,c3 = st.columns([1,1.5,1])
     with c2:
         u = st.text_input("아이디")
         p = st.text_input("비밀번호", type="password")
+        remember = st.checkbox("자동 로그인", value=True)
         if st.button("로그인", use_container_width=True, type="primary"):
             user = sdb.get_user(u, p)
             if user:
                 st.session_state["user"] = user
+                if remember:
+                    set_cookie("ari_username", u)
+                    set_cookie("ari_password", p)
+                else:
+                    delete_cookie("ari_username")
+                    delete_cookie("ari_password")
                 st.rerun()
             else:
                 st.error("아이디 또는 비밀번호가 틀렸습니다.")
@@ -127,6 +165,8 @@ def main_dashboard():
         filter_days = st.selectbox("기간", [7,14,30,90,0], format_func=lambda x:"전체" if x==0 else f"최근 {x}일")
         st.markdown("---")
         if st.button("🚪 로그아웃", use_container_width=True):
+            delete_cookie("ari_username")
+            delete_cookie("ari_password")
             del st.session_state["user"]; st.rerun()
 
     if st.session_state.get("run_crawler"):
