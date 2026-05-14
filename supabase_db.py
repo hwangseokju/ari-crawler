@@ -1,6 +1,5 @@
 """
 Supabase DB 모듈
-SQLite 대신 Supabase(PostgreSQL)를 사용합니다.
 """
 
 import os
@@ -19,7 +18,7 @@ def _get_secret(key: str) -> str:
         return os.getenv(key, "")
 
 SUPABASE_URL = _get_secret("SUPABASE_URL")
-SUPABASE_KEY = _get_secret("SUPABASE_ANON_KEY")
+SUPABASE_KEY = _get_secret("SUPABASE_KEY")  # service_role 키
 
 try:
     from supabase import create_client, Client
@@ -28,7 +27,7 @@ try:
     @st.cache_resource
     def _get_supabase_client():
         url = _get_secret("SUPABASE_URL")
-        key = _get_secret("SUPABASE_ANON_KEY")
+        key = _get_secret("SUPABASE_KEY")
         if url and key:
             return create_client(url, key)
         return None
@@ -45,10 +44,7 @@ def _hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 
-# ── 사용자 관리 ──────────────────────────────────────────────
-
 def get_user(username: str, password: str) -> Optional[Dict]:
-    """로그인 검증. 성공 시 user dict 반환, 실패 시 None."""
     if not SUPABASE_OK:
         return None
     try:
@@ -63,7 +59,6 @@ def get_user(username: str, password: str) -> Optional[Dict]:
 
 
 def create_user(username: str, password: str, role: str = "user") -> bool:
-    """신규 사용자 생성."""
     if not SUPABASE_OK:
         return False
     try:
@@ -80,7 +75,6 @@ def create_user(username: str, password: str, role: str = "user") -> bool:
 
 
 def get_all_users() -> List[Dict]:
-    """전체 사용자 목록 (admin용)."""
     if not SUPABASE_OK:
         return []
     try:
@@ -102,19 +96,14 @@ def delete_user(user_id: int) -> bool:
         return False
 
 
-# ── 키워드 관리 (사용자별) ────────────────────────────────────
-
 def get_keywords(user_id: int) -> Dict[str, List[str]]:
-    """사용자별 키워드 반환."""
     if not SUPABASE_OK:
         return {}
     try:
         res = supabase.table("keywords").select("*").eq("user_id", user_id).order("id").execute()
         result: Dict[str, List[str]] = {}
         for row in (res.data or []):
-            cat = row["category"]
-            kw = row["keyword"]
-            result.setdefault(cat, []).append(kw)
+            result.setdefault(row["category"], []).append(row["keyword"])
         return result
     except Exception as e:
         print(f"[get_keywords 오류] {e}")
@@ -122,7 +111,6 @@ def get_keywords(user_id: int) -> Dict[str, List[str]]:
 
 
 def get_default_keywords() -> Dict[str, List[str]]:
-    """기본 키워드 (로그인 전 또는 비어있을 때)."""
     import config
     return {cat: list(kws) for cat, kws in config.CORE_KEYWORDS.items()}
 
@@ -157,36 +145,28 @@ def delete_keyword(user_id: int, category: str, keyword: str) -> bool:
 
 
 def copy_default_keywords_to_user(user_id: int):
-    """신규 사용자에게 기본 키워드 복사."""
     defaults = get_default_keywords()
     for cat, kws in defaults.items():
         for kw in kws:
             add_keyword(user_id, cat, kw)
 
 
-# ── 수집 결과 저장 ────────────────────────────────────────────
-
 def save_items(items: List[Dict], query_category: str, user_id: int = None) -> int:
-    """수집 결과 저장 (URL + user_id 기준 중복 제거)."""
     if not SUPABASE_OK or not items:
         return 0
-
     now = datetime.now().isoformat(timespec="seconds")
     added = 0
-
     for item in items:
         url = item.get("link") or item.get("url", "")
         if not url:
             continue
         try:
-            # URL + user_id 중복 확인
             q = supabase.table("items").select("id").eq("url", url)
             if user_id:
                 q = q.eq("user_id", user_id)
             existing = q.execute()
             if existing.data:
                 continue
-
             row = {
                 "url": url,
                 "title": item.get("title", "")[:500],
@@ -205,19 +185,16 @@ def save_items(items: List[Dict], query_category: str, user_id: int = None) -> i
             added += 1
         except Exception as e:
             print(f"  [save 오류] {e}: {url[:80]}")
-
     return added
 
 
 def get_items(days: int = None, category: str = None,
               platform: str = None, keyword: str = None,
               user_id: int = None) -> List[Dict]:
-    """수집 결과 조회 (user_id로 본인 데이터만)."""
     if not SUPABASE_OK:
         return []
     try:
         query = supabase.table("items").select("*")
-
         if user_id:
             query = query.eq("user_id", user_id)
         if days:
@@ -227,11 +204,9 @@ def get_items(days: int = None, category: str = None,
             query = query.eq("query_category", category)
         if platform:
             query = query.eq("platform", platform)
-
         query = query.order("first_seen", desc=True).limit(500)
         res = query.execute()
         items = res.data or []
-
         if keyword:
             kw_lower = keyword.lower()
             items = [it for it in items
@@ -243,34 +218,26 @@ def get_items(days: int = None, category: str = None,
 
 
 def get_stats(user_id: int = None) -> Dict:
-    """통계 데이터."""
     if not SUPABASE_OK:
         return {"total": 0, "by_category": {}, "by_platform": {}, "top_queries": [], "daily_trend": []}
     try:
-        # 전체 수
         q_total = supabase.table("items").select("id", count="exact")
         if user_id:
             q_total = q_total.eq("user_id", user_id)
         total_res = q_total.execute()
         total = total_res.count or 0
 
-        # 카테고리별
         q = supabase.table("items").select("query_category, platform, query, first_seen")
         if user_id:
             q = q.eq("user_id", user_id)
         items_all = q.execute().data or []
 
-        by_cat = {}
-        by_plat = {}
-        query_count = {}
-        daily = {}
-
+        by_cat, by_plat, query_count, daily = {}, {}, {}, {}
         for it in items_all:
             cat = it.get("query_category", "기타")
             plat = it.get("platform", "")
             qry = it.get("query", "")
             date = (it.get("first_seen") or "")[:10]
-
             by_cat[cat] = by_cat.get(cat, 0) + 1
             by_plat[plat] = by_plat.get(plat, 0) + 1
             query_count[qry] = query_count.get(qry, 0) + 1
@@ -281,7 +248,6 @@ def get_stats(user_id: int = None) -> Dict:
             [{"query": k, "count": v} for k, v in query_count.items()],
             key=lambda x: x["count"], reverse=True
         )[:20]
-
         daily_trend = sorted(
             [{"date": k, "count": v} for k, v in daily.items()],
             key=lambda x: x["date"]
