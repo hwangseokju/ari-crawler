@@ -1,42 +1,39 @@
 """
-Supabase DB 모듈
+Supabase DB 모듈 (service_role 키 사용)
 """
 
 import os
 import hashlib
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
 
-load_dotenv()
-
+# 키 읽기 (Streamlit Cloud 또는 로컬 .env)
 def _get_secret(key: str) -> str:
+    # Streamlit Cloud secrets 먼저 시도
     try:
         import streamlit as st
-        return st.secrets.get(key, os.getenv(key, ""))
+        val = st.secrets.get(key, "")
+        if val:
+            return val
     except Exception:
-        return os.getenv(key, "")
+        pass
+    # 로컬 .env fallback
+    from dotenv import load_dotenv
+    load_dotenv()
+    return os.getenv(key, "")
 
-SUPABASE_URL = _get_secret("SUPABASE_URL")
-SUPABASE_KEY = _get_secret("SUPABASE_KEY")  # service_role 키
+# Supabase 연결
+supabase = None
+SUPABASE_OK = False
 
 try:
-    from supabase import create_client, Client
-    import streamlit as st
-
-    @st.cache_resource
-    def _get_supabase_client():
-        url = _get_secret("SUPABASE_URL")
-        key = _get_secret("SUPABASE_KEY")
-        if url and key:
-            return create_client(url, key)
-        return None
-
-    supabase = _get_supabase_client()
-    SUPABASE_OK = supabase is not None
+    from supabase import create_client
+    _url = _get_secret("SUPABASE_URL")
+    _key = _get_secret("SUPABASE_ANON_KEY") or _get_secret("SUPABASE_KEY")
+    if _url and _key:
+        supabase = create_client(_url, _key)
+        SUPABASE_OK = True
 except Exception as e:
-    supabase = None
-    SUPABASE_OK = False
     print(f"[Supabase 연결 실패] {e}")
 
 
@@ -50,9 +47,7 @@ def get_user(username: str, password: str) -> Optional[Dict]:
     try:
         pw_hash = _hash_password(password)
         res = supabase.table("users").select("*").eq("username", username).eq("password_hash", pw_hash).execute()
-        if res.data:
-            return res.data[0]
-        return None
+        return res.data[0] if res.data else None
     except Exception as e:
         print(f"[get_user 오류] {e}")
         return None
@@ -62,10 +57,9 @@ def create_user(username: str, password: str, role: str = "user") -> bool:
     if not SUPABASE_OK:
         return False
     try:
-        pw_hash = _hash_password(password)
         supabase.table("users").insert({
             "username": username,
-            "password_hash": pw_hash,
+            "password_hash": _hash_password(password),
             "role": role
         }).execute()
         return True
@@ -164,8 +158,7 @@ def save_items(items: List[Dict], query_category: str, user_id: int = None) -> i
             q = supabase.table("items").select("id").eq("url", url)
             if user_id:
                 q = q.eq("user_id", user_id)
-            existing = q.execute()
-            if existing.data:
+            if q.execute().data:
                 continue
             row = {
                 "url": url,
@@ -204,13 +197,10 @@ def get_items(days: int = None, category: str = None,
             query = query.eq("query_category", category)
         if platform:
             query = query.eq("platform", platform)
-        query = query.order("first_seen", desc=True).limit(500)
-        res = query.execute()
-        items = res.data or []
+        items = query.order("first_seen", desc=True).limit(500).execute().data or []
         if keyword:
-            kw_lower = keyword.lower()
-            items = [it for it in items
-                     if kw_lower in (it.get("title", "") + it.get("description", "")).lower()]
+            kl = keyword.lower()
+            items = [it for it in items if kl in (it.get("title","") + it.get("description","")).lower()]
         return items
     except Exception as e:
         print(f"[get_items 오류] {e}")
@@ -224,8 +214,7 @@ def get_stats(user_id: int = None) -> Dict:
         q_total = supabase.table("items").select("id", count="exact")
         if user_id:
             q_total = q_total.eq("user_id", user_id)
-        total_res = q_total.execute()
-        total = total_res.count or 0
+        total = q_total.execute().count or 0
 
         q = supabase.table("items").select("query_category, platform, query, first_seen")
         if user_id:
@@ -244,21 +233,12 @@ def get_stats(user_id: int = None) -> Dict:
             if date:
                 daily[date] = daily.get(date, 0) + 1
 
-        top_queries = sorted(
-            [{"query": k, "count": v} for k, v in query_count.items()],
-            key=lambda x: x["count"], reverse=True
-        )[:20]
-        daily_trend = sorted(
-            [{"date": k, "count": v} for k, v in daily.items()],
-            key=lambda x: x["date"]
-        )[-30:]
-
         return {
             "total": total,
             "by_category": by_cat,
             "by_platform": by_plat,
-            "top_queries": top_queries,
-            "daily_trend": daily_trend,
+            "top_queries": sorted([{"query":k,"count":v} for k,v in query_count.items()], key=lambda x:x["count"], reverse=True)[:20],
+            "daily_trend": sorted([{"date":k,"count":v} for k,v in daily.items()], key=lambda x:x["date"])[-30:],
         }
     except Exception as e:
         print(f"[get_stats 오류] {e}")
